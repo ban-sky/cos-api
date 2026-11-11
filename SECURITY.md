@@ -91,6 +91,7 @@
 
 ## 验证记录
 
+- 兼容性：在 PHP 8.5.8（当前 8.5 稳定分支）下 21 项单元测试、`composer validate --strict`、`composer audit` 与端到端 HTTP 验证全部通过；CI 矩阵覆盖 PHP 8.3/8.4/8.5。
 - `composer audit`：`No security vulnerability advisories found.`
 - 单元测试：21 项全部通过，覆盖类型白名单、URL 编码、缓存读写/过期/回退、分页、配置优先级、空列表与异常路径。
 - 动态验证：

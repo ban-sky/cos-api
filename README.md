@@ -3,7 +3,7 @@
 随机腾讯云 COS 壁纸服务：访问 `/` 返回一张随机壁纸的 HTML 页面，访问 `/api/` 直接 302 跳转到随机壁纸地址。
 
 - 演示：<https://api.lonelyx.cn>
-- 运行环境：PHP 8.1+（需要 `curl`、`openssl` 扩展）、Composer
+- 运行环境：PHP 8.1+（已在 PHP 8.5 上验证；需要 `curl`、`openssl`、`mbstring`、`simplexml`、`zip` 扩展）、Composer
 - 依赖：`qcloud/cos-sdk-v5`（已移除未使用的 `tencentcloud/tencentcloud-sdk-php`）
 
 ## 目录结构
@@ -63,14 +63,17 @@ composer check   # php -l + 单元测试
 
 单元测试不访问网络，也不需要真实凭据。
 
+代码只使用 PHP 8.1+ 的稳定语法，并对可空参数显式声明 `?type`，不含 PHP 8.4/8.5 已弃用的隐式 nullable、`md5` 签名等写法；CI 矩阵覆盖 PHP 8.3、8.4、8.5，其中 8.5 为当前最新稳定版。
+
 ## 构建
 
-CI 工作流（`.github/workflows/php.yml`）在 `dev`/`lonely`/`main` 分支推送或手动触发时：
+CI 工作流（`.github/workflows/php.yml`）在 `dev`/`lonely`/`main` 分支推送或手动触发时，对 PHP 8.3/8.4/8.5 分别执行：
 
 1. `composer install --no-dev --prefer-dist`
 2. `composer lint` + `composer test`
-3. `composer build` 打包 `index.php api lib key styles.css favicon.ico vendor` 为 `cos-api.zip`
-4. 上传 artifact（`actions/upload-artifact@v4`）
+3. `composer audit`
+4. PHP 8.5 任务执行 `composer build`，打包 `index.php api lib key styles.css favicon.ico vendor` 为 `cos-api.zip`
+5. PHP 8.5 任务上传 artifact（`actions/upload-artifact@v4`）
 
 本地等价的构建命令：
 
