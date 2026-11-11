@@ -103,10 +103,10 @@ https://<COS_DOMAIN>/<folder>/<object>
 
 1. 把 `cos-api.zip` 解压到站点根目录（或上传 `index.php`、`api/`、`lib/`、`key/`、`styles.css`、`favicon.ico`、`vendor/`）。
 2. 配置环境变量：至少 `COS_BUCKET`、`COS_REGION`、`COS_SECRET_ID`、`COS_SECRET_KEY`，并把 `COS_DOMAIN` 改为自己的加速域名。
-3. 禁止 Web 访问 `key/`、`lib/`、`tests/`。Apache 已附带 `.htaccess`；Nginx 示例：
+3. 禁止 Web 访问 `key/`、`lib/`、`tests/`、`vendor/`。Apache 已附带 `.htaccess`；Nginx 示例：
 
    ```nginx
-   location ~ ^/(key|lib|tests)/ {
+   location ~ ^/(key|lib|tests|vendor)/ {
        deny all;
    }
    ```
@@ -123,7 +123,27 @@ https://<COS_DOMAIN>/<folder>/<object>
 
 6. 首次请求会列举 COS 对象并写入缓存，默认缓存 300 秒；后续请求不再访问 COS。
 
-页面返回 503 时，查看 PHP 错误日志中的 `cos-api:` 行；页面本身不会输出凭据、堆栈或路径。
+### 503 排查
+
+页面返回 503 且内容为 `Wallpaper service temporarily unavailable.`，说明 PHP 已启动，但壁纸解析失败。查看 PHP 错误日志中的 `cos-api:` 行：
+
+| 日志关键字 | 含义 | 处理 |
+| --- | --- | --- |
+| `COS configuration is incomplete` | 缺少 bucket/region/SecretId/SecretKey | 配置环境变量或 `key/config.local.php` |
+| `listObjects failed` | COS 调用失败：密钥、权限、地域或网络 | 检查密钥是否有效、桶是否存在、子账号是否有 ListBucket 权限 |
+| `Invalid wallpaper domain` | `COS_DOMAIN` 格式不合法 | 改成裸域名，如 `image.lonelyx.cn` |
+| `No wallpapers found` | 桶里对应前缀没有对象 | 检查 `horizontal_wallpapers/`、`catgirl_wallpapers/` 目录 |
+| `Unable to create the wallpaper cache directory` | 缓存目录不可写 | 设置可写的 `COS_CACHE_DIR` |
+
+## 升级
+
+`cos-api.zip` 内含空的 `key/Tencent Key.php` 模板；直接解压覆盖已有站点会把服务器上的凭据清空，导致 503。升级时先备份并排除 `key/`：
+
+```bash
+unzip -o cos-api.zip -x 'key/*'
+```
+
+更稳妥的做法是把凭据放在环境变量或 `key/config.local.php`：这两者都不在 zip 里，升级只覆盖代码与 `vendor/`。
 
 ## 开发与测试
 
