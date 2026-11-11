@@ -409,6 +409,35 @@ check('configuration precedence: env > local file > legacy file', function (): v
     }
 });
 
+check('unreadable legacy key file does not block local config', function (): void {
+    $dir = temp_dir();
+    try {
+        $legacy = $dir . '/Tencent Key.php';
+        file_put_contents($legacy, "<?php\n\$bucket = 'legacy-bucket';\n");
+        chmod($legacy, 0000);
+        if (is_readable($legacy)) {
+            return; // Running as root bypasses permission bits; nothing to assert.
+        }
+        file_put_contents(
+            $dir . '/config.local.php',
+            "<?php return ['bucket' => 'local-bucket', 'region' => 'r', 'secretId' => 'i', 'secretKey' => 'k'];\n"
+        );
+        with_env([
+            'COS_BUCKET' => null,
+            'COS_REGION' => null,
+            'COS_SECRET_ID' => null,
+            'COS_SECRET_KEY' => null,
+            'COS_DOMAIN' => null,
+            'COS_CACHE_TTL' => null,
+        ], function () use ($dir): void {
+            same('local-bucket', wallpaper_config($dir)['bucket']);
+        });
+    } finally {
+        @chmod($dir . '/Tencent Key.php', 0644);
+        remove_dir($dir);
+    }
+});
+
 check('cache TTL is validated and clamped', function (): void {
     with_env(['COS_CACHE_TTL' => '-10'], function (): void {
         same(0, wallpaper_config()['ttl']);

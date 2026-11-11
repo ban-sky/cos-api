@@ -88,33 +88,51 @@ function wallpaper_config(?string $keyDir = null): array
     // Legacy layout: key/Tencent Key.php defines plain variables.
     $legacyFile = $keyDir . '/Tencent Key.php';
     if (is_file($legacyFile)) {
-        /** @psalm-suppress UnusedVariable */
-        $returned = require $legacyFile;
-        if (is_array($returned)) {
-            $bucket = (string) ($returned['bucket'] ?? $bucket);
-            $region = (string) ($returned['region'] ?? $region);
-            $secretId = (string) ($returned['secretId'] ?? $secretId);
-            $secretKey = (string) ($returned['secretKey'] ?? $secretKey);
-            $domain = (string) ($returned['domain'] ?? $domain);
+        if (!is_readable($legacyFile)) {
+            error_log('cos-api: legacy key file is not readable, skipping: ' . $legacyFile);
         } else {
-            // The included file assigned these variables in this scope.
-            $bucket = isset($bucket) ? (string) $bucket : '';
-            $region = isset($region) ? (string) $region : '';
-            $secretId = isset($secretId) ? (string) $secretId : '';
-            $secretKey = isset($secretKey) ? (string) $secretKey : '';
+            try {
+                /** @psalm-suppress UnusedVariable */
+                $returned = require $legacyFile;
+            } catch (Throwable $e) {
+                error_log('cos-api: legacy key file failed to load: ' . $legacyFile . ': ' . $e->getMessage());
+                $returned = null;
+            }
+            if (is_array($returned)) {
+                $bucket = (string) ($returned['bucket'] ?? $bucket);
+                $region = (string) ($returned['region'] ?? $region);
+                $secretId = (string) ($returned['secretId'] ?? $secretId);
+                $secretKey = (string) ($returned['secretKey'] ?? $secretKey);
+                $domain = (string) ($returned['domain'] ?? $domain);
+            } elseif ($returned !== null) {
+                // The included file assigned these variables in this scope.
+                $bucket = isset($bucket) ? (string) $bucket : '';
+                $region = isset($region) ? (string) $region : '';
+                $secretId = isset($secretId) ? (string) $secretId : '';
+                $secretKey = isset($secretKey) ? (string) $secretKey : '';
+            }
         }
     }
 
     // Optional, git-ignored file for deployments that cannot set env vars.
     $localFile = $keyDir . '/config.local.php';
     if (is_file($localFile)) {
-        $local = require $localFile;
-        if (is_array($local)) {
-            $bucket = (string) ($local['bucket'] ?? $bucket);
-            $region = (string) ($local['region'] ?? $region);
-            $secretId = (string) ($local['secretId'] ?? $secretId);
-            $secretKey = (string) ($local['secretKey'] ?? $secretKey);
-            $domain = (string) ($local['domain'] ?? $domain);
+        if (!is_readable($localFile)) {
+            error_log('cos-api: local config file is not readable, skipping: ' . $localFile);
+        } else {
+            try {
+                $local = require $localFile;
+            } catch (Throwable $e) {
+                error_log('cos-api: local config file failed to load: ' . $localFile . ': ' . $e->getMessage());
+                $local = null;
+            }
+            if (is_array($local)) {
+                $bucket = (string) ($local['bucket'] ?? $bucket);
+                $region = (string) ($local['region'] ?? $region);
+                $secretId = (string) ($local['secretId'] ?? $secretId);
+                $secretKey = (string) ($local['secretKey'] ?? $secretKey);
+                $domain = (string) ($local['domain'] ?? $domain);
+            }
         }
     }
 
