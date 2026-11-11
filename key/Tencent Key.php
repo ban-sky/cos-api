@@ -24,3 +24,7 @@ $region = '';
 // 前往 https://console.cloud.tencent.com/cam/capi 获取
 $secretId = '';
 $secretKey = '';
+
+// CDN 加速域名，例如 image.lonelyx.cn
+// 不要带 https://、结尾 /，也不要带 /horizontal_wallpapers 等目录；程序会自动拼接
+$domain = '';
