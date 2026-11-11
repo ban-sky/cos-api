@@ -3,7 +3,7 @@
 随机腾讯云 COS 壁纸服务：访问 `/` 返回一张随机壁纸的 HTML 页面，访问 `/api/` 直接 302 跳转到随机壁纸地址。
 
 - 演示：<https://api.lonelyx.cn>
-- 运行环境：PHP 8.1+（已在 PHP 8.5 上验证；需要 `curl`、`openssl`、`mbstring`、`simplexml`、`zip` 扩展）、Composer
+- 运行环境：PHP 8.1+（已在 PHP 8.5 上验证；需要 `curl`、`openssl`、`mbstring`、`simplexml` 扩展；构建另需 `zip`）、Composer
 - 依赖：`qcloud/cos-sdk-v5`（已移除未使用的 `tencentcloud/tencentcloud-sdk-php`）
 
 ## 目录结构
