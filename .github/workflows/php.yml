@@ -1,34 +1,49 @@
-name: Update Vendor and Package
+name: Build cos-api package
 
 on:
   push:
     branches:
+      - dev
       - lonely
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  update-vendor-and-package:
-    runs-on: windows-latest
+  build:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.x'
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
 
       - name: Install Composer dependencies
-        run: composer install --no-scripts
+        run: composer install --no-interaction --no-progress --no-dev --prefer-dist
 
-      - name: Update vendor directory
-        run: composer update --no-scripts
+      - name: Lint
+        run: composer lint
+
+      - name: Test
+        run: composer test
+
+      - name: Audit dependencies
+        run: composer audit --no-interaction
 
       - name: Create archive
-        run: Compress-Archive -Path 'vendor', 'api', 'key', 'index.php', 'styles.css', 'favicon.ico' -DestinationPath cos-api.zip
+        run: composer build
 
-      - name: Upload cos-api
-        uses: actions/upload-artifact@v3.1.3
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: cos-api
           path: cos-api.zip
+          if-no-files-found: error

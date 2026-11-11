@@ -1,0 +1,5 @@
+/vendor/
+/cos-api.zip
+/key/config.local.php
+/.env
+.DS_Store
