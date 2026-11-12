@@ -1,196 +1,370 @@
 # cos-api
 
-随机腾讯云 COS 壁纸服务：访问 `/` 返回一张随机壁纸的 HTML 页面，访问 `/api/` 直接 302 跳转到随机壁纸地址。
+一个从腾讯云 COS 随机取一张壁纸的极简 PHP 接口：
 
-- 演示：<https://api.lonelyx.cn>
-- 运行环境：PHP 8.1+（已在 PHP 8.5 上验证；需要 `curl`、`openssl`、`mbstring`、`simplexml` 扩展；构建另需 `zip`）、Composer
-- 依赖：`qcloud/cos-sdk-v5`（已移除未使用的 `tencentcloud/tencentcloud-sdk-php`）
+- `/`：返回一个包含随机壁纸的 HTML 页面。
+- `/api/?type=horizontal`：302 跳转到横屏壁纸。
+- `/api/?type=vertical`：302 跳转到竖屏壁纸。
+
+项目不依赖数据库，不需要写缓存目录，保留原来的目录结构和配置方式。本次改造只做 PHP 8.5 适配、安全加固和文档重写，不改变现有 URL、参数和配置文件名。
 
 ## 目录结构
 
+```text
+cos-api/
+├── api/
+│   └── index.php              # 302 接口
+├── key/
+│   ├── Tencent Key.php        # 配置模板（变量写法，兼容旧版）
+│   ├── config.local.php       # 可选：真实密钥（已被 .gitignore 忽略）
+│   └── .htaccess              # Apache 下禁止直接访问 key/
+├── index.php                  # 随机壁纸页面
+├── styles.css
+├── favicon.ico
+├── composer.json
+├── composer.lock
+├── SECURITY.md                # 安全审计与部署注意事项
+├── vendor/                    # composer install 生成，不提交 Git
+└── README.md
 ```
-index.php               HTML 页面入口
-api/index.php           302 跳转接口
-lib/bootstrap.php       自动加载、错误处理等公共启动逻辑
-lib/wallpaper.php       类型白名单、对象列表、缓存、URL 构造
-key/Tencent Key.php     凭据模板（可留空，改用环境变量）
-tests/run.php           无依赖单元测试
-tools/build.php         生成 cos-api.zip 的构建脚本
-```
+
+## 环境要求
+
+| 项目 | 要求 |
+| --- | --- |
+| PHP | 8.1 – 8.5，生产建议 **8.5.12 或更高** |
+| PHP 扩展 | `curl`、`json`、`mbstring`、`openssl`、`simplexml` |
+| Composer | 2.x（仅安装依赖时需要） |
+| 腾讯云 | 一个 COS 存储桶，以及只拥有该桶读取权限的子账号密钥 |
+| CDN | 可选。没有 CDN 时可填 COS 默认域名 |
+
+> PHP 8.5.12 修复了两个可未授权利用的远程代码执行漏洞（CVE-2026-109618、CVE-2026-109619）。1Panel 已提供 `1panel/php:8.5.12` 等修复镜像，生产环境不要继续使用 8.5.8 及更早版本。参考：[1Panel 运行环境安全升级说明](https://docs.fit2cloud.com/1panel/faq/runtime-security-upgrade/)。
 
 ## 配置
 
-### 加速域名填在哪里
+配置按以下顺序加载，后者覆盖前者：
 
-程序生成的图片地址固定为：
+1. `key/Tencent Key.php`（原版变量写法，保持兼容）
+2. `key/config.local.php`（可选，推荐放真实密钥）
+
+配置文件只应设置变量或返回数组，不要输出内容；建议不要写 `?>` 结束标记，避免结束标记后的空白被输出。
+
+### 方式一：继续使用原版配置文件
+
+编辑 `key/Tencent Key.php`：
+
+```php
+<?php
+$bucket = 'example-1250000000';   // 存储桶名称
+$region = 'ap-guangzhou';         // 存储桶地域
+$secretId = 'AKID...';            // 子账号 SecretId
+$secretKey = '...';               // 子账号 SecretKey
+
+// 可选；不填则使用 image.lonelyx.cn
+$domain = 'img.example.com';
+```
+
+### 方式二：使用 config.local.php（推荐）
+
+新建 `key/config.local.php`：
+
+```php
+<?php
+return [
+    'bucket' => 'example-1250000000',
+    'region' => 'ap-guangzhou',
+    'secretId' => 'AKID...',
+    'secretKey' => '...',
+    'domain' => 'img.example.com',
+];
+```
+
+这个文件已在 `.gitignore` 中，不会被误提交。`Tencent Key.php` 可以保持空模板。
+
+### 加速域名怎么填
+
+`domain` 只填 **域名（可带路径前缀）**，不要带协议和结尾斜杠：
+
+| 写法 | 结果 |
+| --- | --- |
+| `img.example.com` | `https://img.example.com/horizontal_wallpapers/xxx.jpg` |
+| `img.example.com/wallpaper` | `https://img.example.com/wallpaper/horizontal_wallpapers/xxx.jpg` |
+| `https://img.example.com/` | 自动去掉 `https://` 和结尾 `/`，等价于第一种 |
+| `img.example.com:8443` | 使用自定义端口 |
+| 空字符串或不填 | 回退到 `image.lonelyx.cn` |
+
+程序始终生成 `https://` 链接。CDN 回源地址应指向 COS 存储桶，并允许访问 `horizontal_wallpapers/`、`catgirl_wallpapers/` 两个目录。
+
+## 在 1Panel 上部署
+
+以下步骤适用于 1Panel v2。不同小版本的菜单名称可能略有差异，以面板实际显示为准。
+
+### 1. 安装 PHP 8.5 运行环境
+
+1. 进入 **应用商店 → 运行环境**。
+2. 先点 **更新远程应用**，确保能获取最新版本。
+3. 安装 PHP，版本选择 **8.5.12**（或更高的 8.5.x 安全版本）。
+4. 在运行环境的 **配置 / 扩展** 中确认已启用：
+   `curl`、`mbstring`、`simplexml`、`zip`、`fileinfo`、`openssl`。
+5. 安装完成后，在运行环境终端执行 `php -v` 和 `php -m` 确认版本与扩展。
+
+> `zip` 主要供 Composer 解压依赖使用；程序运行时只需要 `curl`、`json`、`mbstring`、`openssl`、`simplexml`。
+
+### 2. 创建网站
+
+1. 进入 **网站 → 创建网站**。
+2. 类型选择 **运行环境**，运行环境选择刚安装的 PHP 8.5。
+3. 填写域名，例如 `api.example.com`。
+4. 网站目录使用 1Panel 默认目录，例如：
+   `/www/sites/api.example.com/index`
+5. 不需要创建数据库，也不需要 FTP。
+6. 创建后，如果目录里出现 1Panel 默认的 `index.html`，请删除它，避免它优先于 `index.php`。
+
+### 3. 上传代码
+
+将本项目文件上传到网站根目录，最终结构应为：
 
 ```text
-https://<COS_DOMAIN>/<folder>/<object>
+/www/sites/api.example.com/index/
+├── index.php
+├── api/index.php
+├── key/Tencent Key.php
+├── styles.css
+├── favicon.ico
+└── vendor/
 ```
 
-`<folder>` 是 `horizontal_wallpapers` 或 `catgirl_wallpapers`，`<object>` 是 COS 中的对象 Key。
-`COS_DOMAIN` 填 **绑定到该存储桶的 CDN 加速域名**，不是 COS API 域名，也不是桶名。
-
-还没有加速域名时，可在 COS 控制台给存储桶绑定“自定义 CDN 加速域名”，或在 CDN 控制台添加域名并将源站设为该桶；按提示完成 CNAME 与 HTTPS 证书配置后，再把该域名填入 `COS_DOMAIN`。
-
-三种写法，优先级从高到低：
-
-1. **环境变量（推荐）**
-
-   ```bash
-   COS_DOMAIN=image.lonelyx.cn
-   ```
-
-   PHP-FPM 可在 pool 配置中写 `env[COS_DOMAIN] = image.lonelyx.cn`；Docker 用 `-e COS_DOMAIN=...`；宝塔等面板一般在“网站 → 环境变量”中设置。
-
-2. **`key/config.local.php`**（已 gitignore，不会被打包）
-
-   ```php
-   <?php
-   return [
-       'bucket' => 'example-1250000000',
-       'region' => 'ap-guangzhou',
-       'secretId' => '...',
-       'secretKey' => '...',
-       'domain' => 'image.lonelyx.cn',
-   ];
-   ```
-
-3. **旧版 `key/Tencent Key.php` 中的 `$domain`**（不推荐，文件位于 Web 目录内）
-
-### 加速域名的写法
-
-| 写法 | 是否推荐 | 说明 |
-| --- | --- | --- |
-| `image.lonelyx.cn` | ✅ | 裸域名，最清晰 |
-| `https://image.lonelyx.cn` | ⚠️ | 能识别，会自动去掉协议；统一写裸域名即可 |
-| `image.lonelyx.cn/` | ⚠️ | 能识别，会自动去掉结尾 `/` |
-| `cdn.example.com/wallpaper` | ✅ | CDN 配置了路径前缀时使用，最终地址为 `https://cdn.example.com/wallpaper/<folder>/<object>` |
-| `image.lonelyx.cn/horizontal_wallpapers` | ❌ | 不要带壁纸目录，程序会自动拼接 |
-| `example-1250000000.cos.ap-guangzhou.myqcloud.com` | ⚠️ | 仅当没有 CDN、且桶为公共读时可用；它不是“加速域” |
-| `https://image.lonelyx.cn/abc.jpg` | ❌ | 不要带具体对象路径 |
-
-注意：
-
-- 加速域名必须开启 HTTPS。程序固定输出 `https://`，HTTP 域名会导致混合内容被浏览器拦截。
-- 不设置 `COS_DOMAIN` 时回落到示例域名 `image.lonelyx.cn`；部署自己的站点务必修改，否则图片会指向示例站。
-- 如果 CDN 开启“忽略查询参数”，`Accept: image/webp` 触发的 `?imageMogr2/format/webp` 会失效；需要保留查询串才能按需转 WebP。
-- 修改环境变量后重启 PHP-FPM 或容器；`config.local.php` 每次请求都会读取，改完即时生效。
-
-### 完整环境变量
-
-| 变量 | 必填 | 说明 |
-| --- | --- | --- |
-| `COS_BUCKET` | 是 | 存储桶，例如 `example-1250000000` |
-| `COS_REGION` | 是 | 地域，例如 `ap-guangzhou` |
-| `COS_SECRET_ID` | 是 | 腾讯云 SecretId |
-| `COS_SECRET_KEY` | 是 | 腾讯云 SecretKey |
-| `COS_DOMAIN` | 否 | CDN 加速域名（裸域名，需 HTTPS），默认 `image.lonelyx.cn`，可带端口/路径前缀 |
-| `COS_CACHE_TTL` | 否 | 对象列表缓存秒数，默认 `300`，范围 `0`–`86400` |
-| `COS_CACHE_DIR` | 否 | 缓存目录，默认系统临时目录下的应用私有目录 |
-
-优先级：环境变量 > `key/config.local.php`（已 gitignore）> `key/Tencent Key.php`。
-注意 `COS_CACHE_TTL` 只从环境变量读取，`config.local.php` 中不支持 `ttl` 键。
-
-## 使用
-
-- `GET /`：HTML 页面，`<img>` 指向随机壁纸
-- `GET /api/`：302 到随机壁纸
-- `?type=horizontal`（默认）或 `?type=vertical`；其他值一律回落到 `horizontal`
-- 请求头带 `Accept: image/webp` 时，URL 追加 `?imageMogr2/format/webp`
-
-## 部署
-
-1. 把 `cos-api.zip` 解压到站点根目录（或上传 `index.php`、`api/`、`lib/`、`key/`、`styles.css`、`favicon.ico`、`vendor/`）。
-2. 配置环境变量：至少 `COS_BUCKET`、`COS_REGION`、`COS_SECRET_ID`、`COS_SECRET_KEY`，并把 `COS_DOMAIN` 改为自己的加速域名。
-3. 禁止 Web 访问 `key/`、`lib/`、`tests/`、`vendor/`。Apache 已附带 `.htaccess`；Nginx 示例：
-
-   ```nginx
-   location ~ ^/(key|lib|tests|vendor)/ {
-       deny all;
-   }
-   ```
-
-4. 重启 PHP-FPM 或容器，使环境变量生效。若通过 shell 注入变量，确认 PHP-FPM 未开启 `clear_env`，或改用 pool 中的 `env[COS_DOMAIN] = ...`。
-5. 验证输出：
-
-   ```bash
-   curl -s https://your-site/ | grep -o '<img[^>]*>'
-   curl -sI 'https://your-site/api/?type=vertical' | grep -i '^location:'
-   ```
-
-   两条命令中的主机名都应为 `COS_DOMAIN` 的值。
-
-6. 首次请求会列举 COS 对象并写入缓存，默认缓存 300 秒；后续请求不再访问 COS。
-
-### 503 排查
-
-页面返回 503 且内容为 `Wallpaper service temporarily unavailable.`，说明 PHP 已启动，但壁纸解析失败。查看 PHP 错误日志中的 `cos-api:` 行：
-
-| 日志关键字 | 含义 | 处理 |
-| --- | --- | --- |
-| `COS configuration is incomplete` | 缺少 bucket/region/SecretId/SecretKey | 配置环境变量或 `key/config.local.php` |
-| `listObjects failed` | COS 调用失败：密钥、权限、地域或网络 | 检查密钥是否有效、桶是否存在、子账号是否有 ListBucket 权限 |
-| `Invalid wallpaper domain` | `COS_DOMAIN` 格式不合法 | 改成裸域名，如 `image.lonelyx.cn` |
-| `No wallpapers found` | 桶里对应前缀没有对象 | 检查 `horizontal_wallpapers/`、`catgirl_wallpapers/` 目录 |
-| `Unable to create the wallpaper cache directory` | 缓存目录不可写 | 设置可写的 `COS_CACHE_DIR` |
-
-## 升级
-
-`cos-api.zip` 内含空的 `key/Tencent Key.php` 模板；直接解压覆盖已有站点会把服务器上的凭据清空，导致 503。升级时先备份并排除 `key/`：
+可以用 1Panel 文件管理器上传压缩包后解压，也可以在服务器上克隆到临时目录再复制：
 
 ```bash
-unzip -o cos-api.zip -x 'key/*'
+git clone <你的仓库地址> /tmp/cos-api
+cp -a /tmp/cos-api/. /www/sites/api.example.com/index/
 ```
 
-更稳妥的做法是把凭据放在环境变量或 `key/config.local.php`：这两者都不在 zip 里，升级只覆盖代码与 `vendor/`。
+如果使用 Git，注意不要把线上 `key/config.local.php` 覆盖掉。
 
-## 开发与测试
+### 4. 安装 Composer 依赖
+
+推荐在本地安装后上传 `vendor/`，这样不依赖服务器上的 Composer：
 
 ```bash
+composer install --no-dev --optimize-autoloader
+```
+
+然后把整个 `vendor/` 目录上传到网站根目录。
+
+如果要在服务器上安装，先进入 1Panel 的 PHP 运行环境终端（或在面板 **容器** 中找到 PHP 容器）：
+
+```bash
+docker ps --format '{{.Names}}' | grep -i php
+docker exec -it <php容器名> sh
+
+cd /www/sites/api.example.com/index
+php -v
+curl -sS https://getcomposer.org/installer | php
+php composer.phar install --no-dev --optimize-autoloader
+```
+
+安装完成后确认：
+
+```bash
+php -r "require 'vendor/autoload.php'; echo 'autoload ok', PHP_EOL;"
+```
+
+### 5. 写入配置并设置权限
+
+在 1Panel 文件管理器中编辑 `key/Tencent Key.php`，或新建 `key/config.local.php`（推荐，见上文）。
+
+然后设置权限。1Panel 的 PHP 容器通常以 `www-data` 运行，先确认实际用户：
+
+```bash
+docker exec -it <php容器名> id
+```
+
+如果输出是 `uid=33(www-data)`，执行：
+
+```bash
+cd /www/sites/api.example.com/index
+
+# 目录 755，文件 644；PHP 只需要读权限
+find . -type d -exec chmod 755 {} \;
+find . -type f -exec chmod 644 {} \;
+
+# 配置文件只给 PHP 用户读，避免其他用户读取
+chown -R www-data:www-data .
+chmod 640 "key/Tencent Key.php"
+chmod 640 key/config.local.php 2>/dev/null || true
+
+# 不要让 PHP 进程写 key/ 目录
+chmod 550 key
+```
+
+如果容器用户不是 `www-data`，把上面的用户和组换成 `id` 命令显示的用户即可。不要使用 `chmod 777`。
+
+### 6. 配置 Nginx，禁止访问 key/ 和 vendor/
+
+1Panel 使用 OpenResty/Nginx。进入 **网站 → 对应站点 → 配置文件**，在 `server { ... }` 内加入：
+
+```nginx
+# 配置文件、依赖目录不允许直接访问
+location ^~ /key/ {
+    deny all;
+    return 403;
+}
+
+location ^~ /vendor/ {
+    deny all;
+    return 403;
+}
+```
+
+保存后重载 Nginx。`^~` 的优先级高于后面的 PHP 正则 location，可以确保 `/key/xxx.php` 不会被当作 PHP 执行。
+
+> Apache 环境已经自带 `key/.htaccess`；Nginx 不读取 `.htaccess`，所以必须加上面的配置。
+
+### 7. 开启 HTTPS
+
+进入 **网站 → 对应站点 → HTTPS**：
+
+1. 申请 Let's Encrypt 证书，或上传已有证书。
+2. 开启 **强制 HTTPS**。
+3. 保存后访问 `https://api.example.com/` 验证。
+
+CDN 域名也应在腾讯云 CDN 控制台配置 HTTPS 证书；程序生成的是 `https://` 图片地址。
+
+### 8. 验证
+
+```bash
+# 页面应返回 200，并包含 <img class="wallpaper"
+curl -sS -D - https://api.example.com/ -o /tmp/page.html
+grep -o 'src="[^"]*"' /tmp/page.html
+
+# 接口应返回 302，Location 指向图片
+curl -sS -D - 'https://api.example.com/api/?type=vertical' -o /dev/null
+
+# 直接访问配置文件应返回 403
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  'https://api.example.com/key/Tencent%20Key.php'
+```
+
+期望结果：
+
+- `/`：`200 OK`，HTML 中有 `<img class="wallpaper" ...>`。
+- `/api/?type=vertical`：`302 Found`，`Location: https://<加速域名>/catgirl_wallpapers/...`。
+- `/key/...`：`403 Forbidden`。
+- 浏览器 `Accept: image/webp` 时，图片 URL 末尾带 `?imageMogr2/format/webp`。
+
+## 接口说明
+
+| 路径 | 说明 |
+| --- | --- |
+| `/` | 随机横屏壁纸 HTML 页面 |
+| `/?type=vertical` | 随机竖屏壁纸 HTML 页面 |
+| `/api/?type=horizontal` | 302 到随机横屏壁纸 |
+| `/api/?type=vertical` | 302 到随机竖屏壁纸 |
+
+`type` 只接受 `horizontal`、`vertical`；其他值（包括数组）按横屏处理。文件夹对应关系：
+
+- `horizontal` → `horizontal_wallpapers/`
+- `vertical` → `catgirl_wallpapers/`
+
+## 本次修改内容
+
+### PHP 8.5 适配
+
+- 已在 **PHP 8.5.12** 下完成语法检查、依赖安装和端到端验证。
+- 代码只使用 PHP 8.1+ 的稳定语法，没有使用 8.5 已废弃的 API。
+- CI 覆盖 PHP 8.1、8.2、8.3、8.4、8.5。
+
+### 安全修复（不改变使用方式）
+
+1. **XSS**：COS 返回的 `Key` 不再直接拼进 `src`，改为逐段 `rawurlencode` + `htmlspecialchars` 输出。
+2. **Header 注入 / 重定向失效**：`api/index.php` 不再先输出 HTML 再 `header()`；先计算 URL，再发送 302。域名做协议剥离和格式校验。
+3. **错误信息泄露**：关闭 `display_errors`，异常只写日志，访客只看到通用 503。
+4. **空结果 / 异常返回**：过滤目录占位对象和非法 `Contents`，空列表不再触发 `array_rand()` 错误。
+5. **参数类型攻击**：`?type[]=x` 不再触发 `TypeError`，回退到横屏。
+6. **依赖面**：移除完全未使用的 `tencentcloud/tencentcloud-sdk-php`，只保留 `qcloud/cos-sdk-v5`。
+7. **密钥保护**：新增 `key/.htaccess`、`.gitignore`，文档要求 Nginx 禁止访问 `/key/`、`/vendor/`；推荐使用 `config.local.php`。
+8. **响应头**：增加 `X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、CSP，降低内容嗅探和脚本注入风险。
+9. **伪签名清理**：删除无实际校验作用的 `md5(timestamp + nonce + secretKey)` 隐藏字段。
+10. **样式路径**：修正首页 `../styles.css` 的错误路径。
+11. **COS 传输**：qcloud SDK 默认使用 `http`；现在显式设置 `scheme => https`，避免密钥标识走明文链路。
+
+### 兼容性说明
+
+- 原有 URL、`type` 参数、`key/Tencent Key.php` 变量名、目录结构均保留。
+- 旧配置文件即使没有 `$domain` 也能直接使用。
+- 新增 `config.local.php` 是可选的，不配置时行为与原版一致。
+- 随机选择、WebP 自适应、HTML 页面结构保持不变。
+- 主要的行为修正是 `/api/` 现在能正常返回 302（原版先输出 HTML，`header()` 实际不生效）；页面中的隐藏 md5 字段已移除，样式路径已修正。
+
+## 常见问题
+
+### 页面 500 / 503（无法加载）
+
+- `vendor/` 不存在或没有上传完整：程序会返回 503，重新执行 `composer install` 并上传 `vendor/`。
+- PHP 扩展缺失：`php -m` 检查 `curl`、`mbstring`、`simplexml`、`openssl`。
+- PHP 版本低于 8.1：切换到 8.5.12 运行环境。
+- 查看 1Panel 网站日志和 PHP 错误日志。
+
+### 页面 503
+
+程序返回 503 表示配置或 COS 请求失败。查看 PHP 错误日志中的 `cos-api:` 行：
+
+- `COS configuration is incomplete`：`bucket`、`region`、`secretId`、`secretKey` 有空值。
+- `key/Tencent Key.php` / `key/config.local.php`：配置文件不可读或有语法错误。
+- `Invalid CDN domain`：`domain` 带了协议、引号、空格或非法字符。
+- COS 请求异常（如 `cURL error`、`AccessDenied`、`NoSuchBucket`）：密钥无权限、桶名/地域错误、COS 网络不通。
+
+### 直接访问 /key/ 返回 403
+
+这是预期的安全配置。程序内部通过文件系统读取配置，不需要 Web 访问。
+
+### 图片 404
+
+- `domain` 是否填成了 COS 默认域名或已绑定的 CDN 域名。
+- CDN 回源是否指向正确的存储桶。
+- COS 中是否存在 `horizontal_wallpapers/`、`catgirl_wallpapers/` 目录。
+- 密钥是否有 `GetObject` 权限。
+
+### Composer 报扩展缺失
+
+在 1Panel 运行环境中启用对应扩展，或在本机执行：
+
+```bash
+composer install --no-dev --optimize-autoloader
+```
+
+然后把 `vendor/` 上传到服务器。
+
+### 修改代码后不生效
+
+- 确认上传到了正确的网站目录。
+- 1Panel 中重载 PHP 或重启 PHP 容器。
+- 如果启用了 OPcache，等待缓存过期或重启 PHP-FPM。
+
+## 安全建议
+
+- 使用腾讯云 CAM **子账号**，只授予该存储桶的列举和读取权限（至少 `ListBucket`、`GetObject`），不要使用主账号密钥。
+- `key/` 目录不要放在可公开访问的位置；本项目为保持兼容仍放在 `key/`，因此必须配合 Nginx `deny` 或 Apache `.htaccess`。
+- 不要把 `key/config.local.php` 提交到 Git；仓库已忽略该文件。
+- 生产环境关闭 `display_errors`，并在 PHP 配置中设置 `expose_php = Off`。
+- 为 `/` 和 `/api/` 配置限流（1Panel WAF 或 Nginx `limit_req`），避免接口被刷导致 COS 请求费用。
+- 定期执行 `composer update` 和 `composer audit`，及时升级 PHP 安全版本。
+
+## 开发与检查
+
+```bash
+# 安装依赖
 composer install
-composer check   # php -l + 单元测试
+
+# 语法检查
+find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
+
+# 依赖漏洞检查
+composer audit
 ```
 
-单元测试不访问网络，也不需要真实凭据。
+## 许可
 
-代码只使用 PHP 8.1+ 的稳定语法，并对可空参数显式声明 `?type`，不含 PHP 8.4/8.5 已弃用的隐式 nullable、`md5` 签名等写法；CI 矩阵覆盖 PHP 8.3、8.4、8.5，其中 8.5 为当前最新稳定版。
-
-## 构建
-
-CI 工作流（`.github/workflows/php.yml`）在 `dev`/`lonely`/`main` 分支推送或手动触发时，对 PHP 8.3/8.4/8.5 分别执行：
-
-1. `composer install --no-dev --prefer-dist`
-2. `composer lint` + `composer test`
-3. `composer audit`
-4. PHP 8.5 任务执行 `composer build`，打包 `index.php api lib key styles.css favicon.ico vendor` 为 `cos-api.zip`
-5. PHP 8.5 任务上传 artifact（`actions/upload-artifact@v4`）
-
-本地等价的构建命令：
-
-```bash
-composer install --no-dev --prefer-dist --classmap-authoritative
-composer build
-```
-
-`tools/build.php` 使用 PHP 的 `zip` 扩展生成压缩包，Linux/macOS/Windows 行为一致；
-部署时把 `cos-api.zip` 解压到站点根目录即可，`key/config.local.php` 不会被打包。
-
-## 安全
-
-审计结论与残余风险见 [SECURITY.md](SECURITY.md)。要点：
-
-- 凭据优先用环境变量；`key/`、`lib/`、`tests/` 自带 Apache 拒绝访问规则，Nginx 需自行加 `deny all`。
-- 壁纸类型走白名单，对象 Key 逐段百分号编码后再输出/跳转，避免 XSS 与响应头注入。
-- 错误统一返回 503 纯文本，不输出堆栈与路径。
-- 对象列表默认缓存 5 分钟；COS 故障时回退到过期缓存。
-
-## 相对旧版的主要改动
-
-- 合并 `index.php` 与 `api/index.php` 的重复逻辑到 `lib/wallpaper.php`。
-- 修复 `api/index.php` 先输出 HTML 再 `header('Location: ...')` 导致的重定向失败。
-- 修复空桶/Listing 失败时 `array_rand()` 抛 `ValueError`、`['Contents']` 未定义等问题。
-- 增加分页列举、缓存与过期缓存回退；按 1000 条/页最多翻 20 页。
-- 增加类型白名单、URL 编码、CSP/`nosniff`、错误信息脱敏。
-- 移除未使用的 `tencentcloud/tencentcloud-sdk-php`，vendor 从约百 MB 降到约 5 MB。
-- 提交 `composer.lock`，构建可复现。
+未附带开源许可证文件；如需开源，请自行补充 LICENSE。

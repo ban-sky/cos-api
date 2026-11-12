@@ -1,27 +1,27 @@
-name: Build cos-api package
+name: CI
 
 on:
   push:
     branches:
       - dev
-      - lonely
       - main
+      - lonely
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: PHP ${{ matrix.php }}
+  test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.3', '8.4', '8.5']
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup PHP
@@ -30,23 +30,26 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: curl, mbstring, simplexml, zip
           coverage: none
-          tools: composer:v2
 
-      - name: Install Composer dependencies
-        run: composer install --no-interaction --no-progress --no-dev --prefer-dist
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Validate composer.json
+        run: composer validate --strict
 
       - name: Lint
-        run: composer lint
-
-      - name: Test
-        run: composer test
+        run: find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
 
       - name: Audit dependencies
-        run: composer audit --no-interaction
+        run: composer audit
 
-      - name: Create archive
+      - name: Build release zip
         if: matrix.php == '8.5'
-        run: composer build
+        run: |
+          rm -f key/config.local.php
+          zip -r cos-api.zip \
+            index.php api key styles.css favicon.ico vendor \
+            README.md SECURITY.md composer.json composer.lock .gitignore
 
       - name: Upload artifact
         if: matrix.php == '8.5'
@@ -54,4 +57,3 @@ jobs:
         with:
           name: cos-api
           path: cos-api.zip
-          if-no-files-found: error

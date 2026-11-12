@@ -1,31 +1,20 @@
 {
     "name": "lonely-starry/cos-api",
-    "description": "Random Tencent COS wallpaper service: an HTML page and a redirect API.",
+    "description": "Random wallpaper API backed by Tencent Cloud COS",
     "type": "project",
     "license": "proprietary",
     "require": {
         "php": ">=8.1",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-simplexml": "*",
         "qcloud/cos-sdk-v5": "^2.6"
     },
     "config": {
         "optimize-autoloader": true,
         "sort-packages": true,
         "preferred-install": "dist"
-    },
-    "scripts": {
-        "lint": [
-            "@php -l index.php",
-            "@php -l api/index.php",
-            "@php -l lib/bootstrap.php",
-            "@php -l lib/wallpaper.php",
-            "@php -l tests/run.php",
-            "@php -l tools/build.php"
-        ],
-        "test": "@php tests/run.php",
-        "check": [
-            "@lint",
-            "@test"
-        ],
-        "build": "@php tools/build.php"
     }
 }

@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "7dfccb33c3240a7e5bc2a6ed86e8bab2",
+    "content-hash": "699d898fc37ecc547289c769ea7b31b9",
     "packages": [
         {
             "name": "guzzlehttp/command",
@@ -222,16 +222,16 @@
         },
         {
             "name": "guzzlehttp/guzzle-services",
-            "version": "1.7.4",
+            "version": "1.7.5",
             "source": {
                 "type": "git",
                 "url": "https://github.com/guzzle/guzzle-services.git",
-                "reference": "c5e0bb0ed7cfe6a69ed2186d035d1d85d1097f4a"
+                "reference": "a15f27180a7ffdc74eb7fd444048e8708bf4137d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/guzzle/guzzle-services/zipball/c5e0bb0ed7cfe6a69ed2186d035d1d85d1097f4a",
-                "reference": "c5e0bb0ed7cfe6a69ed2186d035d1d85d1097f4a",
+                "url": "https://api.github.com/repos/guzzle/guzzle-services/zipball/a15f27180a7ffdc74eb7fd444048e8708bf4137d",
+                "reference": "a15f27180a7ffdc74eb7fd444048e8708bf4137d",
                 "shasum": ""
             },
             "require": {
@@ -292,7 +292,7 @@
             "description": "Provides an implementation of the Guzzle Command library that uses Guzzle service descriptions to describe web services, serialize requests, and parse responses into easy to use model structures.",
             "support": {
                 "issues": "https://github.com/guzzle/guzzle-services/issues",
-                "source": "https://github.com/guzzle/guzzle-services/tree/1.7.4"
+                "source": "https://github.com/guzzle/guzzle-services/tree/1.7.5"
             },
             "funding": [
                 {
@@ -308,8 +308,8 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-08-24T09:41:24+00:00",
-            "published-time": "2026-08-24T09:42:44+00:00"
+            "time": "2026-11-12T15:21:34+00:00",
+            "published-time": "2026-11-12T15:22:24+00:00"
         },
         {
             "name": "guzzlehttp/promises",
@@ -1046,7 +1046,12 @@
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
-        "php": ">=8.1"
+        "php": ">=8.1",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-simplexml": "*"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

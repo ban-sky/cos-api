@@ -1,30 +1,18 @@
 <?php
-
-/**
- * COS credentials template.
- *
- * Preferred: set environment variables on the web server instead of filling
- * this file in, so secrets never live under the document root:
- *
- *   COS_BUCKET, COS_REGION, COS_SECRET_ID, COS_SECRET_KEY
- *   COS_DOMAIN (optional CDN domain, default image.lonelyx.cn)
- *   COS_CACHE_TTL (optional object-list cache seconds, default 300)
- *
- * Environment variables take precedence over the values below. Alternatively
- * create key/config.local.php (git-ignored) returning the same keys as an
- * array, e.g. ['bucket' => '...', 'region' => '...'].
- *
- * Never commit real credentials. This file is only a template.
- */
-
-// 储存桶名称，例如 example-1250000000
+// 存储桶名称，例如 example-1250000000
 $bucket = '';
-// 地区，例如 ap-guangzhou
+
+// 存储桶地域，例如 ap-guangzhou
 $region = '';
-// 前往 https://console.cloud.tencent.com/cam/capi 获取
+
+// 前往 https://console.cloud.tencent.com/cam/capi 创建子账号密钥
 $secretId = '';
 $secretKey = '';
 
-// CDN 加速域名，例如 image.lonelyx.cn
-// 不要带 https://、结尾 /，也不要带 /horizontal_wallpapers 等目录；程序会自动拼接
-$domain = '';
+// CDN / 自定义域名，只写域名（可带路径前缀），不要写 https:// 和结尾斜杠
+// 不填写时使用默认值 image.lonelyx.cn，兼容旧版配置文件
+$domain = 'image.lonelyx.cn';
+
+// 安全提示：不要把真实密钥提交到 Git。
+// 推荐把真实配置写到 key/config.local.php（该文件已被 .gitignore 忽略），
+// 本文件保持为空模板即可。

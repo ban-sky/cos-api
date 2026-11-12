@@ -1,101 +1,71 @@
-# 安全审计
+# 安全说明
 
-- 审计对象：`lonely-starry/cos-api`（基线提交 `1551792`）及本次重构后的代码
-- 审计时间：2026-11-11
-- 方法：手工代码审计、依赖梳理、`composer audit`、本地动态验证
-- 结论：未发现可直接导致远程代码执行或凭据泄露的高危漏洞；已修复若干中低风险问题。残余风险主要来自部署方式（Web 服务器配置、密钥权限、限流）。
+本文记录本次改造的安全审计范围、已修复问题、仍依赖部署环境的风险，以及复核方法。项目面向公网提供随机壁纸，本身不处理用户登录、支付或写入操作。
+
+## 审计范围
+
+- `index.php`、`api/index.php`
+- `key/Tencent Key.php`、`key/config.local.php` 的加载逻辑
+- `composer.json` / `composer.lock` 依赖
+- `.github/workflows/php.yml`
+- 1Panel + Nginx 的部署方式
+
+测试环境：PHP 8.5.12（cli + 内置 Web Server）；代码按 PHP 8.1+ 语法编写，CI 覆盖 8.1–8.5。
 
 ## 已修复
 
-### 1. 对象 Key 导致的 XSS / 属性逃逸（中）
+| 编号 | 问题 | 处理 |
+| --- | --- | --- |
+| 1 | COS 返回的 `Key` 直接拼入 `<img src>`，可形成 XSS | 每段 `rawurlencode`，输出时 `htmlspecialchars(ENT_QUOTES)` |
+| 2 | `api/index.php` 在 `header('Location')` 之前输出 HTML，重定向失效；URL 可被构造 | 先计算 URL 再 302；域名格式校验；不再输出 HTML |
+| 3 | `display_errors` 开启时泄露路径、堆栈、配置 | 关闭 `display_errors`，异常只写 `error_log`，访客收到通用 503 |
+| 4 | COS 返回空 `Contents` 时 `array_rand()` 报错，暴露内部信息 | 过滤非法对象，空列表抛统一异常并返回 503 |
+| 5 | `?type[]=x` 触发 `TypeError` | 只接受字符串，数组等输入回退到横屏 |
+| 6 | 密钥文件放在 Web 根目录，且被 Git 跟踪 | 保留原路径兼容，但新增 `key/.htaccess`、`.gitignore`；文档要求 Nginx deny；推荐 `config.local.php` |
+| 7 | 依赖中包含完全未使用的 `tencentcloud/tencentcloud-sdk-php` | 移除，只保留 `qcloud/cos-sdk-v5`，并生成 `composer.lock` |
+| 8 | 无实际校验作用的 `md5(timestamp + nonce + secretKey)` 隐藏字段，容易被误认为签名 | 删除 |
+| 9 | 首页引用 `../styles.css`，路径错误 | 改为 `styles.css`，图片样式移到 `.wallpaper` 类 |
+| 10 | 响应缺少内容类型保护、Referrer 策略 | 增加 `X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、CSP |
+| 11 | qcloud SDK 默认 `scheme => http`，COS 请求可能走明文 | 显式设置 `scheme => https` |
 
-原 `index.php` 直接把 `https://域名/对象Key` 拼进 `src="..."`，未做 HTML 转义。对象 Key 可由拥有桶写权限的账号控制，若包含 `"` 即可闭合属性并注入任意 HTML/JS。
+### 关于 CSP 和 iframe
 
-修复：所有输出经 `htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')`；URL 构造时对 Key 按 `/` 分段 `rawurlencode`，从源头消除引号、空格、尖括号。
+没有设置 `frame-ancestors 'none'` / `X-Frame-Options: DENY`，是为了不破坏原有页面被 iframe 嵌入的用法。页面没有登录、支付、表单等敏感操作，点击劫持的实际影响很低；如果部署场景不需要被嵌入，可以在 Nginx 或代码中自行加上：
 
-### 2. 响应头注入（中）
+```nginx
+add_header X-Frame-Options "DENY" always;
+```
 
-原 `api/index.php` 执行 `header('Location: ' . $wallpaperUrl)`，URL 中的 Key 未编码。虽然现代 PHP 会拒绝包含 CR/LF 的响应头，但把不可信数据直接送入响应头仍是缺陷。
+## 仍依赖部署环境的风险
 
-修复：`wallpaper_url()` 对域名做字符白名单校验（`^[A-Za-z0-9.\-]+(?::\d+)?(?:/[...])?$`）、固定 `https` 协议、Key 逐段百分号编码，再交给 `header(..., true, 302)`。
+1. **密钥目录可访问性**：代码保留 `key/` 目录兼容旧配置。Nginx 不读取 `.htaccess`，必须在站点配置中 deny `/key/`、`/vendor/`。最彻底的做法是把配置移出 Web 根目录，但这会改变原版目录结构，本次未做。
+2. **限流与费用**：接口每次请求都会调用 COS `ListObjects`。公网暴露时应配置 1Panel WAF 或 Nginx `limit_req`，否则可能被刷产生 COS 请求费用。
+3. **子账号权限**：必须使用 CAM 子账号，只授予目标存储桶的列举和读取权限；不要使用主账号密钥。
+4. **HTTPS**：程序生成 `https://` 图片地址；站点和 CDN 都需要有效证书。
+5. **PHP 版本**：生产环境应使用 8.5.12 或更高安全版本；8.5.8 及更早版本存在 CVE-2026-109618 / CVE-2026-109619。
+6. **依赖更新**：`composer audit` 只反映当前锁文件；应定期更新并重新审计。
+7. **错误日志**：日志可能包含 COS 返回的桶名等信息，日志目录不应公开访问。
 
-### 3. 凭据放在 Web 根目录且被 Git 跟踪（高，架构性）
+## 复核命令
 
-`key/Tencent Key.php` 位于站点目录内。按原注释填入真实 `secretKey` 后，一旦服务器把 `.php` 当静态文件下载、产生 `.bak`/`.swp` 备份，或 `AllowOverride` 未开启导致防护失效，凭据即泄露。仓库也没有 `.gitignore`，误提交风险高。
+```bash
+# 语法
+find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
 
-修复：
+# 依赖漏洞
+composer audit
 
-- 配置优先级改为 `环境变量 > key/config.local.php（gitignore）> key/Tencent Key.php`，生产环境可完全不落盘。
-- `key/`、`lib/`、`tests/` 添加 Apache `Require all denied`（含 2.2 兼容写法）。
-- 仓库中的 `key/Tencent Key.php` 保持空模板并加警示注释。
-- README 给出 Nginx 的 `deny all` 配置要求。
+# 检查是否误提交真实密钥（示例，按需调整）
+grep -RInE 'AKID[A-Za-z0-9]{10,}|secretKey[[:space:]]*=' \
+  --exclude-dir=vendor --exclude-dir=.git .
 
-残余：Nginx 或未开启 `AllowOverride` 的 Apache 不会读取 `.htaccess`，部署方必须自行加规则；更彻底的做法是把 `key/` 移出 document root。
+# 检查危险函数
+grep -RInE '\b(eval|exec|system|passthru|shell_exec|unserialize)\s*\(' \
+  --exclude-dir=vendor --exclude-dir=.git .
+```
 
-### 4. 错误信息泄露（中）
+本次检查结果：语法通过；`composer audit` 无已知漏洞；未发现真实密钥；未使用上述危险函数。
 
-原代码对 `listObjects()` 失败、空桶、`Contents` 缺失均无处理，异常/警告会把堆栈、绝对路径、Bucket 名输出给客户端。
+## 报告问题
 
-修复：两个入口统一 `try/catch (Throwable)`，`display_errors=0`、`log_errors=1`，失败只返回固定文案与 HTTP 503；缓存/列表异常不会把 SDK 原始错误写入响应。
-
-### 5. 无意义的 MD5 “签名”（低）
-
-原代码计算并输出 `md5($timestamp . $nonce . $secretKey)`，但仓库内没有任何代码校验它，客户端也无法验证；它既不是有效的鉴权，又给外部一个以密钥为输入的摘要 oracle，并固化了 MD5 的使用。
-
-修复：删除该逻辑及两个隐藏字段（确认无消费者）。若未来需要防刷，应在网关做限流/签名校验，而不是把 keyed digest 交给客户端。
-
-### 6. 依赖面过大（中）
-
-`composer.json` 同时引入 `tencentcloud/tencentcloud-sdk-php`（全产品 SDK，体量大、传递依赖多），但代码只使用 `qcloud/cos-sdk-v5` 的 `Qcloud\Cos\Client`。
-
-修复：移除未使用依赖。仅保留 `qcloud/cos-sdk-v5` 及其传递依赖后，vendor 为 5.2 MB；`composer audit` 报告 0 条已知漏洞；提交 `composer.lock` 固定版本。
-
-### 7. 构建与 CI 供应链（中）
-
-原工作流没有 lock 文件、使用已弃用的 `actions/checkout@v2` 与 `actions/upload-artifact@v3.1.3`、没有最小化 `permissions`，且不做 lint/测试就打包。
-
-修复：提交 lock；改用 `actions/checkout@v4`、`actions/upload-artifact@v4`、`permissions: contents: read`；`composer install --no-dev --prefer-dist`；打包前执行 `composer lint` 与 `composer test`；`composer audit` 无告警。
-
-### 8. 请求放大 / 资源耗尽（中）
-
-原实现每个请求都调用一次 `listObjects`（最多 1000 个对象），流量突增时会放大 COS 调用、触发限频并产生费用。
-
-修复：对象列表落盘缓存（默认 300 秒，可用 `COS_CACHE_TTL` 调整）；分页最多 20 页、每页 1000 条；COS 故障时回退到过期缓存（stale-while-error）。残余：没有应用层限流，建议在 CDN/WAF 层限制单 IP 频率。
-
-### 9. 缓存文件安全（低）
-
-缓存内容为对象 Key（非机密），但落在共享临时目录可能被其他本地用户读取或篡改，进而改变跳转目标。
-
-修复：应用私有子目录（`0700`，目录名含部署路径哈希）、临时文件 `0600`、`rename` 原子替换、读取时校验 JSON 结构与元素类型。篡改最多把请求指向同一域名下的其他对象，无法越出域名或注入协议。
-
-### 10. 点击劫持 / MIME 嗅探（低）
-
-修复：HTML 响应加 `Content-Security-Policy: default-src 'none'; img-src https:; style-src 'self'; frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`；跳转响应加 `nosniff`。页面样式移到 `styles.css`，不使用内联样式，CSP 无需 `unsafe-inline`。
-
-## 功能缺陷（顺带修复）
-
-- `api/index.php` 在 `header('Location: ...')` 之前输出完整 HTML，导致 “headers already sent”，302 实际失效。现在入口文件不产生任何输出。
-- 空桶或列举失败时 `array_rand([])` 在 PHP 8 抛 `ValueError`；`listObjects(...)['Contents']` 在无对象时触发未定义键警告。现在空列表返回 `null` 并转为 503。
-- `require '../vendor/autoload.php'` 依赖当前工作目录，改用 `__DIR__` 绝对路径。
-- 两个入口的 `switch` 重复，合并为单一白名单映射。
-
-## 残余风险与建议
-
-1. **凭据最小权限**：为本站单独创建子账号，仅授予 `GetBucket`（ListBucket）+ `GetObject`，并通过策略限制到两个前缀；定期轮换密钥。
-2. **密钥位置**：生产环境优先用环境变量或 systemd/容器 secret；否则把 `key/` 移出 document root，并在 Nginx 添加 `location ^~ /key/ { deny all; }`。
-3. **限流与防盗链**：接口无频率限制，建议 CDN/WAF 按 IP 限流；CDN 侧开启 Referer 防盗链或签名 URL，避免流量盗用。
-4. **缓存时效**：新增壁纸最多延迟 `COS_CACHE_TTL` 秒可见；需要即时生效时设为 `0`（每次回源）。
-5. **依赖更新**：定期执行 `composer audit` 与 `composer update --dry-run`；SDK/Guzzle 的安全通告需及时跟进。
-6. **PHP 运行环境**：关闭 `expose_php`，`display_errors=Off`，仅开放必要扩展；建议 PHP 8.2/8.3 的最新补丁版本。
-7. **桶权限**：若桶为公共读，对象 Key 本身不算机密；不要开启公共写，避免他人上传内容后经本站输出（现已做转义与编码，但仍应禁止公共写）。
-
-## 验证记录
-
-- 兼容性：在 PHP 8.5.8（当前 8.5 稳定分支）下 21 项单元测试、`composer validate --strict`、`composer audit` 与端到端 HTTP 验证全部通过；CI 矩阵覆盖 PHP 8.3/8.4/8.5。
-- `composer audit`：`No security vulnerability advisories found.`
-- 单元测试：21 项全部通过，覆盖类型白名单、URL 编码、缓存读写/过期/回退、分页、配置优先级、空列表与异常路径。
-- 动态验证：
-  - 未配置凭据时 `/` 与 `/api/` 返回 503 纯文本，无堆栈/路径。
-  - 预置缓存后 `/api/?type=vertical` 返回 302，`Location` 为编码后的 HTTPS 地址。
-  - `?type=../../etc/passwd` 回落到 `horizontal`，不会拼接进 Key。
-  - 带 `Accept: image/webp` 时 `Location` 追加 `?imageMogr2/format/webp`。
+如果发现安全问题，请不要在公开 Issue 中粘贴密钥或完整利用代码，先通过仓库维护者提供的私下渠道联系。
