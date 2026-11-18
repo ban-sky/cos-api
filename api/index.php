@@ -119,8 +119,11 @@ try {
         'Prefix' => $folder . '/',
     ]);
 
+    // qcloud SDK 返回 Guzzle Result（ArrayAccess），不是普通数组；两者都要兼容。
     $contents = [];
-    if (is_array($result) && isset($result['Contents']) && is_array($result['Contents'])) {
+    if ((is_array($result) || $result instanceof \ArrayAccess)
+        && isset($result['Contents'])
+        && is_array($result['Contents'])) {
         $contents = $result['Contents'];
     }
 
